@@ -41,10 +41,28 @@ class ScanError(Exception):
     pass
 
 
-def http_get(url, timeout=25):
+def http_get(url, timeout=25, tries=4):
+    """GET with retries: connection resets, timeouts, 429 and 5xx wait 2, 4, 8 seconds
+    and try again. Other 4xx answers are final."""
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "*/*"})
-    with urllib.request.urlopen(req, timeout=timeout) as r:
-        return r.read().decode("utf-8", "replace")
+    for attempt in range(tries):
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
+                return r.read().decode("utf-8", "replace")
+        except urllib.error.HTTPError as e:
+            code = e.code
+            try:
+                e.close()
+            except Exception:
+                pass
+            if code != 429 and code < 500:
+                raise
+            err = e
+        except (urllib.error.URLError, OSError) as e:
+            err = e
+        if attempt == tries - 1:
+            raise err
+        time.sleep(2 * 2 ** attempt)
 
 
 def yahoo_get(path):
@@ -53,7 +71,7 @@ def yahoo_get(path):
         saw_429 = False
         for host in YAHOO_HOSTS:
             try:
-                return http_get(host + path)
+                return http_get(host + path, tries=2)
             except urllib.error.HTTPError as e:
                 last = "HTTP %d" % e.code
                 e.close()
